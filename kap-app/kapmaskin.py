@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import re
 from collections import Counter
+from datetime import datetime
+import io
 
-st.set_page_config(page_title="Kapmaskinen Pro v46", layout="wide")
+st.set_page_config(page_title="Kapmaskinen Pro v47", layout="wide")
 
 # --- INITIALISERA SESSION STATE ---
 if "manual_storage" not in st.session_state:
@@ -58,7 +60,7 @@ tab1, tab2 = st.tabs(["✂️ Optimering", "💰 Priskalkyl"])
 
 # --- FLIK 1: OPTIMERING ---
 with tab1:
-    st.title("✂️ Kapmaskin v46")
+    st.title("✂️ Kapmaskin v47")
     
     lager_plankor = []
     for l, q in st.session_state.manual_storage.items():
@@ -126,6 +128,7 @@ with tab1:
                          pattern.append(extra_len); waste_after -= extra_len; extra_tracker += 1
                 resultat_raw.append((ra_len, tuple(sorted(pattern))))
 
+            # --- REDOVISNING OCH EXPORT ---
             st.divider()
             total_ra_m = sum([r[0] for r in resultat_raw]) / 1000
             total_nytta_m = sum([sum(r[1]) for r in resultat_raw]) / 1000
@@ -137,6 +140,27 @@ with tab1:
             m3.metric("Spill", f"{100 - utnyttjande:.1f} %")
             m4.metric("Nyttigt spill", f"{extra_tracker} st")
 
+            # Skapa Export-fil
+            export_list = []
+            instruktioner = Counter(resultat_raw)
+            for (ra_l, bitar), antal in sorted(instruktioner.items(), key=lambda x: x[0][0], reverse=True):
+                export_list.append({
+                    "Råvara (mm)": ra_l,
+                    "Antal plankor": antal,
+                    "Mönster (mm)": " + ".join(map(str, bitar))
+                })
+            
+            df_export = pd.DataFrame(export_list)
+            csv = df_export.to_csv(index=False).encode('utf-8-sig')
+            
+            st.download_button(
+                label="📥 Ladda ner kapdata (CSV)",
+                data=csv,
+                file_name=f"kaplista_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime='text/csv',
+                use_container_width=True
+            )
+
             stat_df = []
             for l in targets:
                 v_p = (count_tracker[l] / max(1, total_cut_pieces) * 100) if total_cut_pieces > 0 else 0
@@ -144,7 +168,6 @@ with tab1:
             st.table(pd.DataFrame(stat_df))
 
             st.header("🪵 Kaplista")
-            instruktioner = Counter(resultat_raw)
             for (ra_l, bitar), antal in sorted(instruktioner.items(), key=lambda x: x[0][0], reverse=True):
                 with st.expander(f"📦 {antal} st á {ra_l} mm -> {list(bitar)}"):
                     st.write(f"Mönster: {' + '.join(map(str, bitar))}")
@@ -152,28 +175,25 @@ with tab1:
 # --- FLIK 2: PRISKALKYL ---
 with tab2:
     st.title("💰 Priskalkyl & Rabatter")
-    
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("🌲 Material & Dimension")
-        order_m = st.number_input("Orderstorlek (löpmeter)", min_value=1, value=1)
-        raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=0.0)
-        
+        order_m = st.number_input("Orderstorlek (löpmeter)", min_value=1, value=500)
+        raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=4500.0)
         c1, c2 = st.columns(2)
-        raw_t = c1.number_input("Råvara Tjocklek (mm)", value=0.0, step=0.1)
-        raw_b = c2.number_input("Råvara Bredd (mm)", value=0.0, step=0.1)
-        nom_t = c1.number_input("Färdig Tjocklek (mm)", value=0.0, step=0.1)
-        nom_b = c2.number_input("Färdig Bredd (mm)", value=0.0, step=0.1)
+        raw_t = c1.number_input("Råvara Tjocklek (mm)", value=47.0, step=0.1)
+        raw_b = c2.number_input("Råvara Bredd (mm)", value=150.0, step=0.1)
+        nom_t = c1.number_input("Färdig Tjocklek (mm)", value=22.0, step=0.1)
+        nom_b = c2.number_input("Färdig Bredd (mm)", value=145.0, step=0.1)
         split_parts = st.number_input("Antal delar vid klyvning (st)", min_value=1, value=2)
 
     with col_b:
         st.subheader("🏭 Produktion & Rabatt")
-        capacity_m3_shift = st.number_input("Kapacitet (m³/skift)", value=0.0)
-        plane_cost_m3 = st.number_input("Extra hyvelkostnad (kr/m³)", value=0.0)
-        setup_cost = st.number_input("Ställkostnad (kr)", value=0.0)
-        margin_pct = st.number_input("Vinstmarginal (%)", value=60.0)
-        # HÄR ÄR RABATTEN TILLBAKA
-        discount_pct = st.number_input("Procentrabatt till kund (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+        capacity_m3_shift = st.number_input("Kapacitet (m³/skift)", value=50.0)
+        plane_cost_m3 = st.number_input("Extra hyvelkostnad (kr/m³)", value=200.0)
+        setup_cost = st.number_input("Ställkostnad (kr)", value=500.0)
+        margin_pct = st.number_input("Vinstmarginal (%)", value=30.0)
+        discount_pct = st.number_input("Procentrabatt till kund (%)", min_value=0.0, max_value=100.0, value=0.0)
 
     # Beräkningar
     calc_prod_cost_m3 = st.session_state.shift_cost / capacity_m3_shift if capacity_m3_shift > 0 else 0
@@ -183,32 +203,20 @@ with tab2:
     
     raw_cost_lpm = (vol_m_raw * raw_price_m3) / split_parts
     prod_cost_lpm = vol_m_nom * (calc_prod_cost_m3 + plane_cost_m3)
-    
     total_cost_lpm = raw_cost_lpm + prod_cost_lpm
     
-    # Pris före rabatt
     base_sale_lpm = total_cost_lpm * (1 + (margin_pct/100))
-    
-    # Pris efter rabatt
     final_sale_lpm = base_sale_lpm * (1 - (discount_pct/100))
-    
     total_order_price = (final_sale_lpm * order_m) + (setup_cost * (1 + (margin_pct/100)))
     total_discount_amount = (base_sale_lpm - final_sale_lpm) * order_m
 
     st.divider()
-    st.header("📊 Kalkylerat Resultat")
-    
     res1, res2, res3 = st.columns(3)
     res1.metric("Pris / lpm (efter rabatt)", f"{final_sale_lpm:.2f} kr")
     res2.metric("Totalvärde Order", f"{int(total_order_price)} kr")
-    res3.metric("Rabatt i kr", f"{int(total_discount_amount)} kr", delta=f"-{discount_pct}%", delta_color="normal")
+    res3.metric("Rabatt i kr", f"{int(total_discount_amount)} kr", delta=f"-{discount_pct}%")
 
     vol1, vol2, vol3 = st.columns(3)
     vol1.metric("Total Volym", f"{total_order_m3:.3f} m³")
     vol2.metric("Beräknad Vikt", f"{int(total_order_m3 * 500)} kg")
     vol3.metric("Antal löpmeter", f"{order_m} m")
-    
-    with st.expander("Se detaljerad kostnadskalkyl"):
-        st.write(f"Självkostnadspris: {total_cost_lpm:.2f} kr/lpm")
-        st.write(f"Pris före rabatt: {base_sale_lpm:.2f} kr/lpm")
-        st.write(f"Rabatt: {discount_pct}% (-{(base_sale_lpm - final_sale_lpm):.2f} kr/lpm)")
