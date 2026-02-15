@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  kapmaskin:
+    build: .
+    container_name: kapmaskin_container
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
