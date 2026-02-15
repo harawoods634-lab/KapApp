@@ -47,7 +47,7 @@ with st.sidebar:
     
     st.divider()
     st.header("♻️ Nyttigt Spill")
-    use_extra = st.checkbox("Spara extra längd?", value=True)
+    use_extra = st.checkbox("Spara extra längd?", value=False)
     extra_len = st.number_input("Längd (mm)", value=1000, disabled=not use_extra)
     
     st.header("📏 Renskär")
