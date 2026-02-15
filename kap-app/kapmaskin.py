@@ -178,7 +178,7 @@ with tab2:
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("🌲 Material & Dimension")
-        order_m = st.number_input("Orderstorlek (löpmeter)", min_value=1, value=0)
+        order_m = st.number_input("Orderstorlek (löpmeter)", min_value=1, value=1)
         raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=0.0)
         c1, c2 = st.columns(2)
         raw_t = c1.number_input("Råvara Tjocklek (mm)", value=0.0, step=0.1)
