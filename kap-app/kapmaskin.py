@@ -146,23 +146,49 @@ with tab1:
                         total_nytta_mm += extra_len
                 final_results.append((r_len, tuple(sorted(p)), waste))
 
-            # --- DIN KODSNUTT: RESULTAT PROJICERING ---
+            # --- DIN ANPASSADE RESULTATVISNING & NEDLADDNING ---
             st.divider()
             st.header("📊 Resultat Optimering")
+            
+            # Beräkna statistik
             spill_procent = (1 - (total_nytta_mm / total_ra_mm)) * 100 if total_ra_mm > 0 else 0
+            
             c_s1, c_s2, c_s3, c_s4 = st.columns(4)
             c_s1.metric("Total råvara", f"{total_ra_mm/1000:.1f} m")
             c_s2.metric("Utfall", f"{total_nytta_mm/1000:.1f} m")
             c_s3.metric("Spill", f"{spill_procent:.2f} %")
             c_s4.metric("Extra bitar", f"{extra_tracker} st")
 
-            # --- DETALJERAD LISTA ---
-            summary = Counter(final_results)
-            st.subheader("🪵 Kapinstruktioner")
-            for (r_len, p_tuple, w), count in summary.items():
-                with st.expander(f"📦 {count} st á {r_len} mm"):
-                    st.write(f"Mönster: **{' + '.join(map(str, p_tuple))}**")
-                    st.write(f"Spill: {int(w)} mm")
+            # Förbered textfilen för nedladdning
+            txt = f"KAPLISTA v66\n" + "="*45 + f"\nSpill: {spill_procent:.2f}%\n"
+            
+            # Gruppera och sortera resultaten (r_len = råvara, bitar = kapmönster, w = spill)
+            instruktioner = Counter(final_results)
+            sorterade_inst = sorted(instruktioner.items(), key=lambda x: x[0][0], reverse=True)
+
+            curr_ui_ra = None
+            for (ra_l, bitar, rest), antal in sorterade_inst:
+                # Bygg textsträngen för filen
+                txt += f"{antal} st á {ra_l} mm: Kapa {list(bitar)}\n"
+                
+                # Projicera i Streamlit
+                if ra_l != curr_ui_ra:
+                    st.markdown(f"#### 🪵 Råvara {ra_l} mm")
+                    curr_ui_ra = ra_l
+                
+                with st.expander(f"{antal} st plankor -> {list(bitar)}"):
+                    st.write(f"Mönster: {' + '.join(map(str, bitar))} mm")
+                    # 'rest' i vår motor inkluderar redan trim_back, så vi visar det direkt
+                    st.metric("Spill i ände", f"{int(rest)} mm")
+
+            st.divider()
+            from datetime import datetime
+            st.download_button(
+                label="📥 LADDA NER KAPLISTA (.txt)", 
+                data=txt, 
+                file_name=f"kaplista_{datetime.now().strftime('%Y%m%d')}.txt", 
+                use_container_width=True
+            )
 
 with tab2:
     st.title("💰 Priskalkyl")
