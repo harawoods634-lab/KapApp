@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import datetime
 import io
 
-st.set_page_config(page_title="Kapmaskinen Pro v50", layout="wide")
+st.set_page_config(page_title="Kapmaskinen Pro v51", layout="wide")
 
 # --- INITIALISERA SESSION STATE ---
 if "manual_storage" not in st.session_state:
@@ -25,23 +25,31 @@ with st.sidebar:
     st.session_state.shift_cost = st.number_input("Kostnad per skift (kr)", value=st.session_state.shift_cost, step=500.0)
     
     st.divider()
-    # --- SEKTION: IMPORT ---
+    # --- SEKTION: IMPORT (Nu med Excel-stöd) ---
     st.header("📥 Alternativ 1: Import via fil")
-    uploaded_file = st.file_uploader("Ladda upp CSV (Längd, Antal)", type="csv")
+    uploaded_file = st.file_uploader("Ladda upp Excel (.xlsx) eller CSV", type=["csv", "xlsx"])
+    
     if uploaded_file is not None:
         try:
-            df_import = pd.read_csv(uploaded_file, sep=None, engine='python')
-            st.write("Hittad data:")
+            # Identifiera filtyp och läs in
+            if uploaded_file.name.endswith('.xlsx'):
+                df_import = pd.read_excel(uploaded_file)
+            else:
+                df_import = pd.read_csv(uploaded_file, sep=None, engine='python')
+            
+            st.write("Hittad data (första 3 raderna):")
             st.dataframe(df_import.head(3), hide_index=True)
+            
             if st.button("➕ Lägg till filens data i lagret", use_container_width=True):
                 for _, row in df_import.iterrows():
+                    # Vi antar att Kolumn 0 är Längd och Kolumn 1 är Antal
                     l = int(row[0])
                     q = int(row[1])
                     st.session_state.manual_storage[l] = st.session_state.manual_storage.get(l, 0) + q
-                st.success("Datan har lagts till!")
+                st.success("Datan har lagts till i lagret!")
                 st.rerun()
         except Exception as e:
-            st.error(f"Fel vid import: {e}")
+            st.error(f"Kunde inte läsa filen: {e}. Säkerställ att filen bara har två kolumner (Längd, Antal).")
 
     st.divider()
     # --- SEKTION: MANUELLT ---
@@ -85,7 +93,7 @@ tab1, tab2 = st.tabs(["✂️ Optimering", "💰 Priskalkyl"])
 
 # --- FLIK 1: OPTIMERING ---
 with tab1:
-    st.title("✂️ Kapmaskin v50")
+    st.title("✂️ Kapmaskin v51")
     
     lager_plankor = []
     for l, q in st.session_state.manual_storage.items():
@@ -111,7 +119,7 @@ with tab1:
 
     if st.button("🚀 KÖR OPTIMERING", type="primary", use_container_width=True):
         if not lager_plankor:
-            st.error("Lagret är tomt! Importera eller knacka in plankor till vänster.")
+            st.error("Lagret är tomt! Importera Excel/CSV eller knacka in plankor manuellt.")
         else:
             lager_plankor.sort(reverse=True)
             resultat_raw = []
@@ -209,9 +217,9 @@ with tab2:
         discount_pct = st.number_input("Procentrabatt till kund (%)", min_value=0.0, max_value=100.0, value=0.0)
 
     # Beräkningar
-    calc_prod_cost_m3 = st.session_state.shift_cost / capacity_m3_shift if capacity_m3_shift > 0 else 0
     vol_m_nom = (nom_t * nom_b) / 1_000_000
     total_order_m3 = vol_m_nom * order_m
+    calc_prod_cost_m3 = st.session_state.shift_cost / capacity_m3_shift if capacity_m3_shift > 0 else 0
     raw_cost_lpm = ((raw_t * raw_b / 1_000_000) * raw_price_m3) / split_parts
     prod_cost_lpm = vol_m_nom * (calc_prod_cost_m3 + plane_cost_m3)
     total_cost_lpm = raw_cost_lpm + prod_cost_lpm
