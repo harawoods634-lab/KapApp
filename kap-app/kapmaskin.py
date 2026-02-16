@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import datetime
 import io
 
-st.set_page_config(page_title="Kapmaskinen Pro v47", layout="wide")
+st.set_page_config(page_title="Kapmaskinen Pro v50", layout="wide")
 
 # --- INITIALISERA SESSION STATE ---
 if "manual_storage" not in st.session_state:
@@ -25,20 +25,46 @@ with st.sidebar:
     st.session_state.shift_cost = st.number_input("Kostnad per skift (kr)", value=st.session_state.shift_cost, step=500.0)
     
     st.divider()
-    st.header("➕ Lagerhantering")
+    # --- SEKTION: IMPORT ---
+    st.header("📥 Alternativ 1: Import via fil")
+    uploaded_file = st.file_uploader("Ladda upp CSV (Längd, Antal)", type="csv")
+    if uploaded_file is not None:
+        try:
+            df_import = pd.read_csv(uploaded_file, sep=None, engine='python')
+            st.write("Hittad data:")
+            st.dataframe(df_import.head(3), hide_index=True)
+            if st.button("➕ Lägg till filens data i lagret", use_container_width=True):
+                for _, row in df_import.iterrows():
+                    l = int(row[0])
+                    q = int(row[1])
+                    st.session_state.manual_storage[l] = st.session_state.manual_storage.get(l, 0) + q
+                st.success("Datan har lagts till!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Fel vid import: {e}")
+
+    st.divider()
+    # --- SEKTION: MANUELLT ---
+    st.header("➕ Alternativ 2: Knacka själv")
     manual_l = st.number_input("Längd (mm)", value=5400, step=100, key="input_l")
     manual_q = st.number_input("Antal (st)", value=100, step=1, key="input_q")
     
-    if st.button("➕ Lägg till i lager", use_container_width=True):
+    if st.button("➕ Lägg till manuellt", use_container_width=True):
         st.session_state.manual_storage[manual_l] = st.session_state.manual_storage.get(manual_l, 0) + manual_q
         st.rerun()
 
+    st.divider()
+    # --- SEKTION: AKTUELLT LAGER ---
     if st.session_state.manual_storage:
-        st.write("### Aktuellt lager:")
+        st.header("📋 Aktuellt lager")
+        if st.button("🗑️ Rensa hela lagret", type="secondary"):
+            st.session_state.manual_storage = {}
+            st.rerun()
+            
         for l, q in list(st.session_state.manual_storage.items()):
             c1, c2 = st.columns([3, 1])
-            c1.write(f"{q} st á {l} mm")
-            if c2.button("🗑️", key=f"del_{l}"):
+            c1.write(f"**{q} st** á {l} mm")
+            if c2.button("❌", key=f"del_{l}"):
                 del st.session_state.manual_storage[l]
                 st.rerun()
     
@@ -46,7 +72,6 @@ with st.sidebar:
     st.header("🗜️ Kapbegränsning")
     max_unique = st.number_input("Max unika längder per planka", min_value=1, max_value=10, value=2)
     
-    st.divider()
     st.header("♻️ Nyttigt Spill")
     use_extra = st.checkbox("Spara extra längd?", value=True)
     extra_len = st.number_input("Längd (mm)", value=1000, disabled=not use_extra)
@@ -60,7 +85,7 @@ tab1, tab2 = st.tabs(["✂️ Optimering", "💰 Priskalkyl"])
 
 # --- FLIK 1: OPTIMERING ---
 with tab1:
-    st.title("✂️ Kapmaskin v47")
+    st.title("✂️ Kapmaskin v50")
     
     lager_plankor = []
     for l, q in st.session_state.manual_storage.items():
@@ -86,7 +111,7 @@ with tab1:
 
     if st.button("🚀 KÖR OPTIMERING", type="primary", use_container_width=True):
         if not lager_plankor:
-            st.error("Lagret är tomt!")
+            st.error("Lagret är tomt! Importera eller knacka in plankor till vänster.")
         else:
             lager_plankor.sort(reverse=True)
             resultat_raw = []
@@ -101,7 +126,8 @@ with tab1:
                 min_waste = rem_len
                 unique_in_pattern = set(current_pattern)
                 if use_pct_logic and sum(goal_pcts.values()) > 0:
-                    sorted_targets = sorted(targets, key=lambda x: (count_tracker[x] / max(1, total_cut_pieces)) - (goal_pcts[x]/100))
+                    v_p_total = max(1, total_cut_pieces)
+                    sorted_targets = sorted(targets, key=lambda x: (count_tracker[x] / v_p_total) - (goal_pcts[x]/100))
                 else:
                     sorted_targets = targets
                 for t in sorted_targets:
@@ -128,7 +154,6 @@ with tab1:
                          pattern.append(extra_len); waste_after -= extra_len; extra_tracker += 1
                 resultat_raw.append((ra_len, tuple(sorted(pattern))))
 
-            # --- REDOVISNING OCH EXPORT ---
             st.divider()
             total_ra_m = sum([r[0] for r in resultat_raw]) / 1000
             total_nytta_m = sum([sum(r[1]) for r in resultat_raw]) / 1000
@@ -140,26 +165,14 @@ with tab1:
             m3.metric("Spill", f"{100 - utnyttjande:.1f} %")
             m4.metric("Nyttigt spill", f"{extra_tracker} st")
 
-            # Skapa Export-fil
+            # EXPORT
             export_list = []
             instruktioner = Counter(resultat_raw)
             for (ra_l, bitar), antal in sorted(instruktioner.items(), key=lambda x: x[0][0], reverse=True):
-                export_list.append({
-                    "Råvara (mm)": ra_l,
-                    "Antal plankor": antal,
-                    "Mönster (mm)": " + ".join(map(str, bitar))
-                })
-            
+                export_list.append({"Råvara (mm)": ra_l, "Antal plankor": antal, "Mönster (mm)": " + ".join(map(str, bitar))})
             df_export = pd.DataFrame(export_list)
-            csv = df_export.to_csv(index=False).encode('utf-8-sig')
-            
-            st.download_button(
-                label="📥 Ladda ner kapdata (CSV)",
-                data=csv,
-                file_name=f"kaplista_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime='text/csv',
-                use_container_width=True
-            )
+            csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 Ladda ner kapdata (CSV)", data=csv_data, file_name=f"kaplista_{datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv', use_container_width=True)
 
             stat_df = []
             for l in targets:
@@ -174,7 +187,7 @@ with tab1:
 
 # --- FLIK 2: PRISKALKYL ---
 with tab2:
-    st.title("💰 Priskalkyl & Rabatter")
+    st.title("💰 Priskalkyl")
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("🌲 Material & Dimension")
@@ -197,14 +210,11 @@ with tab2:
 
     # Beräkningar
     calc_prod_cost_m3 = st.session_state.shift_cost / capacity_m3_shift if capacity_m3_shift > 0 else 0
-    vol_m_raw = (raw_t * raw_b) / 1_000_000 
     vol_m_nom = (nom_t * nom_b) / 1_000_000
     total_order_m3 = vol_m_nom * order_m
-    
-    raw_cost_lpm = (vol_m_raw * raw_price_m3) / split_parts
+    raw_cost_lpm = ((raw_t * raw_b / 1_000_000) * raw_price_m3) / split_parts
     prod_cost_lpm = vol_m_nom * (calc_prod_cost_m3 + plane_cost_m3)
     total_cost_lpm = raw_cost_lpm + prod_cost_lpm
-    
     base_sale_lpm = total_cost_lpm * (1 + (margin_pct/100))
     final_sale_lpm = base_sale_lpm * (1 - (discount_pct/100))
     total_order_price = (final_sale_lpm * order_m) + (setup_cost * (1 + (margin_pct/100)))
