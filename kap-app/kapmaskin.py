@@ -48,7 +48,7 @@ with st.sidebar:
     
     st.divider()
     st.header("♻️ Nyttigt Spill")
-    use_extra = st.checkbox("Spara extra längd?", value=False)
+    use_extra = st.checkbox("Spara extra längd?", value=True)
     extra_len = st.number_input("Längd (mm)", value=1000, disabled=not use_extra)
     
     st.header("📏 Renskär")
@@ -178,21 +178,21 @@ with tab2:
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("🌲 Material & Dimension")
-        order_m = st.number_input("Orderstorlek (löpmeter)", min_value=1, value=1)
-        raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=0.0)
+        order_m = st.number_input("Orderstorlek (löpmeter)", min_value=1, value=500)
+        raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=4500.0)
         c1, c2 = st.columns(2)
-        raw_t = c1.number_input("Råvara Tjocklek (mm)", value=0.0, step=0.1)
-        raw_b = c2.number_input("Råvara Bredd (mm)", value=0.0, step=0.1)
-        nom_t = c1.number_input("Färdig Tjocklek (mm)", value=0.0, step=0.1)
-        nom_b = c2.number_input("Färdig Bredd (mm)", value=0.0, step=0.1)
+        raw_t = c1.number_input("Råvara Tjocklek (mm)", value=47.0, step=0.1)
+        raw_b = c2.number_input("Råvara Bredd (mm)", value=150.0, step=0.1)
+        nom_t = c1.number_input("Färdig Tjocklek (mm)", value=22.0, step=0.1)
+        nom_b = c2.number_input("Färdig Bredd (mm)", value=145.0, step=0.1)
         split_parts = st.number_input("Antal delar vid klyvning (st)", min_value=1, value=2)
 
     with col_b:
         st.subheader("🏭 Produktion & Rabatt")
-        capacity_m3_shift = st.number_input("Kapacitet (m³/skift)", value=0.0)
-        plane_cost_m3 = st.number_input("Extra hyvelkostnad (kr/m³)", value=0.0)
-        setup_cost = st.number_input("Ställkostnad (kr)", value=0.0)
-        margin_pct = st.number_input("Vinstmarginal (%)", value=60.0)
+        capacity_m3_shift = st.number_input("Kapacitet (m³/skift)", value=50.0)
+        plane_cost_m3 = st.number_input("Extra hyvelkostnad (kr/m³)", value=200.0)
+        setup_cost = st.number_input("Ställkostnad (kr)", value=500.0)
+        margin_pct = st.number_input("Vinstmarginal (%)", value=30.0)
         discount_pct = st.number_input("Procentrabatt till kund (%)", min_value=0.0, max_value=100.0, value=0.0)
 
     # Beräkningar
