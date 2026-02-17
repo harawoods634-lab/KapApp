@@ -1,13 +1,9 @@
 import streamlit as st
 import pandas as pd
 from collections import Counter
-@st.cache_data
-def get_cached_pattern(available_len, targets_tuple, kerf, max_unique):
-    # Flytta din find_best_pattern logik hit
-    # ...
-    return pattern, waste
+from datetime import datetime
 
-st.set_page_config(page_title="Kapmaskinen Pro v65", layout="wide")
+st.set_page_config(page_title="Kapmaskinen Pro v68.2", layout="wide")
 
 # --- INITIALISERA SESSION STATE ---
 if "inventory" not in st.session_state:
@@ -44,7 +40,6 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Importfel: {e}")
 
-    # --- DIN KODSNUTT: MANUELLT LAGER ---
     st.divider()
     st.header("➕ Manuellt Lager")
     m_col1, m_col2 = st.columns(2)
@@ -72,7 +67,7 @@ with st.sidebar:
 tab1, tab2 = st.tabs(["✂️ Optimering", "💰 Priskalkyl"])
 
 with tab1:
-    st.title("✂️ Kapmaskin v65")
+    st.title("✂️ Kapmaskin v68.2")
     
     st.header("🎯 Mållängder")
     use_pct_logic = st.toggle("Prioritera procentmål", value=True)
@@ -109,23 +104,30 @@ with tab1:
             total_ra_mm = 0
             total_nytta_mm = 0
             
-            # --- OPTIMERAD MOTOR (v67) ---
+            # --- TURBO-MOTOR ---
             def find_best_pattern(available_len):
                 best_p, min_waste, best_score = [], available_len, -999999
+                iterations = {"count": 0}
+                
                 def backtrack(rem, current_p):
                     nonlocal best_p, min_waste, best_score
+                    iterations["count"] += 1
+                    if iterations["count"] > 2000: return
+                    
                     found_any = False
                     def get_need_score(x):
                         if not use_pct_logic or total_cut_pieces == 0: return 0
                         return goal_pcts[x] - (count_tracker[x] / total_cut_pieces * 100)
                     
-                    for t in sorted(targets, key=get_need_score, reverse=True):
+                    sorted_targets = sorted(targets, key=get_need_score, reverse=True)
+                    for t in sorted_targets:
                         cost = t + (kerf if current_p else 0)
                         if cost <= rem:
                             if t not in current_p and len(set(current_p)) >= max_unique: continue
                             found_any = True
                             backtrack(rem - cost, current_p + [t])
-                    
+                            if min_waste <= 0: return 
+
                     if not found_any:
                         score = sum(get_need_score(bit) for bit in current_p) if use_pct_logic and current_p else 0
                         if rem < min_waste or (rem == min_waste and score > best_score):
@@ -135,18 +137,10 @@ with tab1:
                 return best_p, min_waste
 
             final_results = []
-            
-            # OPTIMERING: Gå igenom unika längder istället för varje enskild bräda
-            # Detta gör appen 100x snabbare på GitHub
             for r_len, qty in sorted(st.session_state.inventory.items(), reverse=True):
-                # Räkna ut mönstret EN gång för denna längdgrupp
                 p, waste = find_best_pattern(r_len - trim_total)
-                
                 if p:
-                    # Multiplicera statistiken med antalet brädor (qty)
                     total_ra_mm += (r_len * qty)
-                    
-                    # Hantera nyttigt spill (extra bitar)
                     p_list = list(p)
                     temp_waste = waste
                     if use_extra:
@@ -155,181 +149,66 @@ with tab1:
                             temp_waste -= (extra_len + kerf)
                             extra_tracker += qty
                     
-                    # Uppdatera produktionstalen
                     total_nytta_mm += (sum(p_list) * qty)
                     for bit in p_list:
-                        # Om biten inte är en extra-bit, räkna in den i procent-trackern
                         if bit in count_tracker:
                             count_tracker[bit] += qty
                             total_cut_pieces += qty
-
-                    # Spara resultatet som en grupp
                     final_results.append((r_len, tuple(sorted(p_list)), temp_waste, qty))
 
-            # --- DIN KODSNUTT: RESULTAT PROJICERING ---
+            # --- RESULTATVISNING ---
             st.divider()
             st.header("📊 Resultat Optimering")
             spill_procent = (1 - (total_nytta_mm / total_ra_mm)) * 100 if total_ra_mm > 0 else 0
-            
             c_s1, c_s2, c_s3, c_s4 = st.columns(4)
             c_s1.metric("Total råvara", f"{total_ra_mm/1000:.1f} m")
             c_s2.metric("Utfall", f"{total_nytta_mm/1000:.1f} m")
             c_s3.metric("Spill", f"{spill_procent:.2f} %")
             c_s4.metric("Extra bitar", f"{extra_tracker} st")
 
-            # --- KAPLISTA & NEDLADDNING ---
-            txt = f"KAPLISTA v67\n" + "="*45 + f"\nSpill: {spill_procent:.2f}%\n\n"
-            
+            txt = f"KAPLISTA\n" + "="*45 + f"\nSpill: {spill_procent:.2f}%\n\n"
             curr_ui_ra = None
             for ra_l, bitar, rest, antal in final_results:
                 txt += f"{antal} st á {ra_l} mm: Kapa {list(bitar)}\n"
-                
                 if ra_l != curr_ui_ra:
                     st.markdown(f"#### 🪵 Råvara {ra_l} mm")
                     curr_ui_ra = ra_l
-                
                 with st.expander(f"{antal} st plankor -> {list(bitar)}"):
                     st.write(f"Mönster: {' + '.join(map(str, bitar))} mm")
                     st.metric("Spill i ände", f"{int(rest)} mm")
 
-            from datetime import datetime
             st.download_button("📥 LADDA NER KAPLISTA", txt, f"kaplista_{datetime.now().strftime('%Y%m%d')}.txt", use_container_width=True)
 
-            final_results = []
-            all_raw = []
-            for l, q in st.session_state.inventory.items():
-                all_raw.extend([l] * q)
-            all_raw.sort(reverse=True)
-
-            for r_len in all_raw:
-                p, waste = find_best_pattern(r_len - trim_total)
-                total_ra_mm += r_len
-                total_nytta_mm += sum(p)
-                for bit in p:
-                    count_tracker[bit] += 1
-                    total_cut_pieces += 1
-                if use_extra:
-                    while waste >= (extra_len + kerf):
-                        p.append(extra_len)
-                        waste -= (extra_len + kerf)
-                        extra_tracker += 1
-                        total_nytta_mm += extra_len
-                final_results.append((r_len, tuple(sorted(p)), waste))
-
-            # --- DIN ANPASSADE RESULTATVISNING & NEDLADDNING ---
-            st.divider()
-            st.header("📊 Resultat Optimering")
-            
-            # Beräkna statistik
-            spill_procent = (1 - (total_nytta_mm / total_ra_mm)) * 100 if total_ra_mm > 0 else 0
-            
-            c_s1, c_s2, c_s3, c_s4 = st.columns(4)
-            c_s1.metric("Total råvara", f"{total_ra_mm/1000:.1f} m")
-            c_s2.metric("Utfall", f"{total_nytta_mm/1000:.1f} m")
-            c_s3.metric("Spill", f"{spill_procent:.2f} %")
-            c_s4.metric("Extra bitar", f"{extra_tracker} st")
-
-            # Förbered textfilen för nedladdning
-            txt = f"KAPLISTA v66\n" + "="*45 + f"\nSpill: {spill_procent:.2f}%\n"
-            
-            # Gruppera och sortera resultaten (r_len = råvara, bitar = kapmönster, w = spill)
-            instruktioner = Counter(final_results)
-            sorterade_inst = sorted(instruktioner.items(), key=lambda x: x[0][0], reverse=True)
-
-            curr_ui_ra = None
-            for (ra_l, bitar, rest), antal in sorterade_inst:
-                # Bygg textsträngen för filen
-                txt += f"{antal} st á {ra_l} mm: Kapa {list(bitar)}\n"
-                
-                # Projicera i Streamlit
-                if ra_l != curr_ui_ra:
-                    st.markdown(f"#### 🪵 Råvara {ra_l} mm")
-                    curr_ui_ra = ra_l
-                
-                with st.expander(f"{antal} st plankor -> {list(bitar)}"):
-                    st.write(f"Mönster: {' + '.join(map(str, bitar))} mm")
-                    # 'rest' i vår motor inkluderar redan trim_back, så vi visar det direkt
-                    st.metric("Spill i ände", f"{int(rest)} mm")
-
-            st.divider()
-            from datetime import datetime
-            st.download_button(
-                label="📥 LADDA NER KAPLISTA (.txt)", 
-                data=txt, 
-                file_name=f"kaplista_{datetime.now().strftime('%Y%m%d')}.txt", 
-                use_container_width=True
-            )
-
 with tab2:
-    st.title("💰 Priskalkyl")
+    st.title("💰 Priskalkylator")
     col_a, col_b = st.columns(2)
     with col_a:
-        st.subheader("🌲 Dimensioner & Råvara")
-        order_m = st.number_input("Order (längd i meter)", min_value=1, value=500)
-        raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=4500.0, step=50.0)
-        
-        c1, c2 = st.columns(2)
-        raw_t = c1.number_input("Råvara Tjocklek (mm)", value=47.0, step=0.1, key="rt_v33")
-        raw_b = c2.number_input("Råvara Bredd (mm)", value=150.0, step=0.1, key="rb_v33")
-        
-        st.write("**Produkt (Nominella mått)**")
-        nom_t = c1.number_input("Nominell Tjocklek (mm)", value=22.0, step=0.1, key="nt_v33")
-        nom_b = c2.number_input("Nominell Bredd (mm)", value=145.0, step=0.1, key="nb_v33")
-        
-        st.divider()
-        split_parts = st.number_input("Antal delar vid klyvning (st)", min_value=1, value=2, help="Ex: 1=ingen klyvning, 8=klyv till 8 bitar")
+        st.subheader("🌲 Material")
+        order_m = st.number_input("Order (löpmeter)", min_value=1, value=500)
+        raw_price_m3 = st.number_input("Råvarupris (kr/m³)", value=4500.0)
+        raw_t = st.number_input("Råvara Tjocklek (mm)", value=47.0)
+        raw_b = st.number_input("Råvara Bredd (mm)", value=150.0)
+        split_parts = st.number_input("Klyvning (antal delar)", min_value=1, value=2)
 
     with col_b:
-        st.subheader("🏭 Kapacitetskalkyl")
-        capacity_m3_shift = st.number_input("Kapacitet för produkt (m³/skift)", value=50.0, step=1.0)
-        
-        calc_prod_cost_m3 = st.session_state.shift_cost / capacity_m3_shift if capacity_m3_shift > 0 else 0
-        st.info(f"Produktionskostnad bas: {calc_prod_cost_m3:.0f} kr/m³")
-        
-        plane_cost_m3 = st.number_input("Extra hyvelkostnad (kr/m³)", value=200.0)
+        st.subheader("🏭 Produktion")
+        capacity_m3_shift = st.number_input("Kapacitet (m³/skift)", value=50.0)
+        st.session_state.shift_cost = st.number_input("Kostnad/skift (kr)", value=st.session_state.shift_cost)
+        nom_t = st.number_input("Färdig Tjocklek (mm)", value=22.0)
+        nom_b = st.number_input("Färdig Bredd (mm)", value=145.0)
+        margin_pct = st.number_input("Marginal (%)", value=30.0)
         setup_cost = st.number_input("Ställkostnad (kr)", value=500.0)
-        
-        st.divider()
-        margin_pct = st.number_input("Vinstmarginal (%)", value=30.0)
-        discount_pct = st.number_input("Volymrabatt (%)", value=0.0)
 
-    # Beräkningar
-    vol_m_raw = (raw_t * raw_b) / 1_000_000 
     vol_m_nom = (nom_t * nom_b) / 1_000_000
     total_order_m3 = vol_m_nom * order_m
-    
-    # Självkostnad per löpmeter
-    raw_cost_lpm = (vol_m_raw * raw_price_m3) / split_parts
-    prod_cost_lpm = vol_m_nom * calc_prod_cost_m3
-    extra_cost_lpm = vol_m_nom * plane_cost_m3
-    total_cost_lpm = raw_cost_lpm + prod_cost_lpm + extra_cost_lpm
-    
-    # Försäljningspriser
-    sale_lpm_no_disc = total_cost_lpm * (1 + (margin_pct/100))
-    final_sale_lpm = sale_lpm_no_disc * (1 - (discount_pct/100))
-    final_sale_m3 = final_sale_lpm / vol_m_nom if vol_m_nom > 0 else 0
-    
-    # Totalsummor
-    total_raw_cost = raw_cost_lpm * order_m
-    total_prod_cost = (prod_cost_lpm + extra_cost_lpm) * order_m
-    total_setup_sale = setup_cost * (1 + (margin_pct/100)) * (1 - (discount_pct/100))
-    total_order_price = (final_sale_lpm * order_m) + total_setup_sale
+    raw_cost_lpm = ((raw_t * raw_b / 1_000_000) * raw_price_m3) / split_parts
+    prod_cost_lpm = vol_m_nom * (st.session_state.shift_cost / capacity_m3_shift if capacity_m3_shift > 0 else 0)
+    total_cost_lpm = raw_cost_lpm + prod_cost_lpm
+    final_sale_lpm = total_cost_lpm * (1 + (margin_pct/100))
+    total_order_price = (final_sale_lpm * order_m) + (setup_cost * (1 + (margin_pct/100)))
 
-    # Resultatvisning Kalkyl
     st.divider()
-    st.header(f"📊 Sammanställning ({total_order_m3:.3f} m³)")
-    
-    r1, r2, r3, r4 = st.columns(4)
+    r1, r2, r3 = st.columns(3)
     r1.metric("Pris / lpm", f"{final_sale_lpm:.2f} kr")
-    r2.metric("Pris / m³", f"{int(final_sale_m3)} kr")
-    r3.metric("Total Order", f"{int(total_order_price)} kr")
-    r4.metric("Självkostnad / lpm", f"{total_cost_lpm:.2f} kr")
-
-    st.subheader("📋 Kostnadsnedbrytning (Självkostnad exkl. marginal)")
-    breakdown_data = {
-        "Kategori": ["Råvara", "Produktion (Lön/Drift)", "Extra hyvling", "Ställkostnad (per order)"],
-        "Per löpmeter": [f"{raw_cost_lpm:.2f} kr", f"{prod_cost_lpm:.2f} kr", f"{extra_cost_lpm:.2f} kr", "-"],
-        "Total för order": [f"{int(total_raw_cost)} kr", f"{int(prod_cost_lpm * order_m)} kr", f"{int(extra_cost_lpm * order_m)} kr", f"{int(setup_cost)} kr"]
-    }
-    st.table(pd.DataFrame(breakdown_data))
-
+    r2.metric("Total Order", f"{int(total_order_price)} kr")
+    r3.metric("Volym", f"{total_order_m3:.3f} m³")
