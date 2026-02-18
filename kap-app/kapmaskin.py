@@ -3,181 +3,166 @@ import pandas as pd
 from collections import Counter
 from datetime import datetime
 
-st.set_page_config(page_title="Kapmaskinen Pro v71.2", layout="wide")
+st.set_page_config(page_title="Kapmaskinen Pro v81.0", layout="wide")
 
 # --- SMART CACHING ---
 @st.cache_data
 def process_excel(file):
     try:
-        df = pd.read_excel(file) if hasattr(file, 'name') and file.name.endswith('.xlsx') else pd.read_csv(file)
-        new_inventory = {}
-        for col_idx in range(3, 19):
-            if col_idx >= len(df.columns): break
+        df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
+        raw_rows = []
+        for col_idx in range(3, 19): 
             header_val = df.columns[col_idx]
             try:
                 raw_l = float(header_val)
                 l_mm = int(round(raw_l * 1000)) if raw_l < 100 else int(round(raw_l))
-                total_qty = pd.to_numeric(df.iloc[:, col_idx], errors='coerce').fillna(0).sum()
-                if total_qty > 0:
-                    new_inventory[l_mm] = new_inventory.get(l_mm, 0) + int(total_qty)
+                for row_idx in range(len(df)):
+                    qty = pd.to_numeric(df.iloc[row_idx, col_idx], errors='coerce')
+                    if not pd.isna(qty) and qty > 0:
+                        raw_rows.append({
+                            'id': f"row_{row_idx}_col_{col_idx}_{datetime.now().timestamp()}",
+                            'l': l_mm, 'q': int(qty),
+                            'name': f"Paket {df.iloc[row_idx, 1] if len(df.columns)>1 else row_idx}"
+                        })
             except: continue
-        return new_inventory
-    except:
-        return None
+        return raw_rows
+    except: return None
 
-if "inventory" not in st.session_state:
-    st.session_state.inventory = {} 
+# --- INITIALISERA SESSION STATE ---
+if "inventory_rows" not in st.session_state:
+    st.session_state.inventory_rows = [] 
 if "target_lengths" not in st.session_state:
-    st.session_state.target_lengths = {1060: 32, 1090: 46, 1120: 22}
+    st.session_state.target_lengths = {1060: 0, 1090: 0, 1120: 0}
 
-# --- SIDOPANEL ---
+# --- SIDOPANEL: LAGER ---
 with st.sidebar:
-    st.header("⚙️ Inställningar")
-    kerf = st.number_input("Sågbladets bredd (mm)", value=4)
-    trim_total = st.number_input("Renskär totalt (mm)", value=20)
+    st.title("📦 Lagerhantering")
+    uploaded_file = st.file_uploader("Ladda upp Excel/CSV", type=["xlsx", "csv"])
+    if uploaded_file and st.button("📥 Importera till lager"):
+        new_data = process_excel(uploaded_file)
+        if new_data:
+            st.session_state.inventory_rows.extend(new_data)
     
     st.divider()
-    st.header("📥 Excel-import")
-    uploaded_file = st.file_uploader("Ladda upp råvarufil", type=["xlsx", "csv"])
-    if uploaded_file is not None:
-        if st.button("Läs in fil"):
-            data = process_excel(uploaded_file)
-            if data:
-                st.session_state.inventory.update(data)
-                st.success("Lager uppdaterat!")
-                st.rerun()
-
-    st.header("➕ Manuellt Lager")
-    m_col1, m_col2 = st.columns(2)
-    manual_l = m_col1.number_input("Längd (mm)", value=5400, key="new_ra_l")
-    manual_q = m_col2.number_input("Antal", value=100, key="new_ra_q")
-    if st.button("➕ Lägg till"):
-        st.session_state.inventory[manual_l] = st.session_state.inventory.get(manual_l, 0) + manual_q
+    st.subheader("➕ Manuellt lager")
+    m_l = st.number_input("Längd (mm)", value=5400, step=100)
+    m_q = st.number_input("Antal (st)", value=100)
+    if st.button("Lägg till brädor"):
+        st.session_state.inventory_rows.append({'id': str(datetime.now().timestamp()), 'l': m_l, 'q': m_q, 'name': "Manuellt"})
         st.rerun()
+
+    st.divider()
+    st.subheader("📋 Inläst lager")
+    if st.session_state.inventory_rows:
+        if st.button("🗑️ Töm allt lager"):
+            st.session_state.inventory_rows = []; st.rerun()
+        for i, item in enumerate(st.session_state.inventory_rows):
+            col_info, col_del = st.columns([4, 1])
+            col_info.write(f"**{item['q']}st** {item['l']}mm")
+            if col_del.button("❌", key=f"del_{item['id']}"):
+                st.session_state.inventory_rows.pop(i); st.rerun()
 
 # --- HUVUDYTA ---
 tab1, tab2 = st.tabs(["✂️ Optimering", "💰 Priskalkyl"])
 
 with tab1:
-    st.title("✂️ Kapoptimering v71.2")
+    st.title("✂️ Kapoptimering v81.0")
     
-    st.header("🎯 Mållängder & Procent")
-    use_pct_logic = st.toggle("Tvinga fram procentmål (Högsta prioritet)", value=True)
-    
-    t_cols = st.columns(len(st.session_state.target_lengths))
-    for i, (l, p) in enumerate(list(st.session_state.target_lengths.items())):
-        with t_cols[i]:
-            st.session_state.target_lengths[l] = st.number_input(f"{l}mm %", 0, 100, p, key=f"t_{l}")
-            if st.button(f"Ta bort {l}", key=f"del_t_{l}"):
-                del st.session_state.target_lengths[l]
-                st.rerun()
+    with st.expander("🎯 Mållängder & Procent (Sätt 0% för fri optimering)", expanded=True):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        new_tl = c1.number_input("Ny längd (mm)", value=1200)
+        new_tp = c2.number_input("Mål (%)", value=0)
+        if c3.button("Lägg till"):
+            st.session_state.target_lengths[new_tl] = new_tp; st.rerun()
+        
+        for tl in sorted(st.session_state.target_lengths.keys()):
+            cl, cp, cd = st.columns([2, 2, 1])
+            cl.write(f"**{tl} mm**")
+            st.session_state.target_lengths[tl] = cp.number_input(f"% {tl}", 0, 100, st.session_state.target_lengths[tl], key=f"p_{tl}", label_visibility="collapsed")
+            if cd.button("❌", key=f"d_{tl}"): del st.session_state.target_lengths[tl]; st.rerun()
 
-    st.divider()
-    max_unique = st.number_input("Max unika mått per planka", 1, 5, 2)
-    use_extra = st.checkbox("Fyll ut med extra bitar", value=True)
-    extra_len = st.number_input("Längd på extra bit (mm)", value=1000)
+    st.header("🛠️ Strategi")
+    col_s1, col_s2, col_s3 = st.columns([2, 1, 1])
+    opt_mode = col_s1.selectbox("Gruppering:", ["Målstyrd (Blanda fritt)", "Brädstyrd (En längd/bräda)", "Poststyrd (Hela paket)", "Längdstyrd (Samma råvarulängd)"])
+    use_extra = col_s2.toggle("Extra bitar", value=True)
+    extra_l = col_s3.number_input("Längd extra (mm)", value=1000)
+    kerf = 4; trim = 20
 
     if st.button("🚀 KÖR OPTIMERING", type="primary", use_container_width=True):
-        if not st.session_state.inventory:
-            st.warning("Lagret är tomt!")
+        if not st.session_state.inventory_rows:
+            st.error("Lagret är tomt!")
         else:
             targets = sorted(list(st.session_state.target_lengths.keys()), reverse=True)
             goal_pcts = st.session_state.target_lengths
-            count_tracker = {l: 0 for l in targets}
-            total_cut_pieces = 0
-            extra_tracker = 0
-            total_ra_mm = 0
-            total_nytta_mm = 0
-            
-            all_pieces = []
-            for l, q in st.session_state.inventory.items():
-                all_pieces.extend([l] * q)
-            all_pieces.sort(reverse=True)
+            count_t = {l: 0 for l in targets}; total_c = 0; total_ra = 0; total_nytta = 0; extra_c = 0
+            results = []
 
-            def find_forced_pattern(available_len):
-                best_p, min_waste, best_score = [], available_len, -999999999
-                def backtrack(rem, current_p):
-                    nonlocal best_p, min_waste, best_score
-                    found_any = False
-                    def get_urgent_score(x):
-                        if not use_pct_logic: return 0
-                        if total_cut_pieces == 0: return goal_pcts[x]
-                        current_pct = (count_tracker[x] / total_cut_pieces * 100)
-                        return goal_pcts[x] - current_pct
+            def get_best_pattern(r_l, max_u):
+                best_p, min_w, best_s = [], r_l, -999999
+                def backtrack(rem, cur_p):
+                    nonlocal best_p, min_w, best_s
+                    # Sortering: Prioritera mått som ligger under sin %-nivå. 
+                    # Om mål är 0%, använd minsta spill som sekundär drivkraft.
+                    def score_func(x):
+                        if total_c == 0: return goal_pcts[x]
+                        return goal_pcts[x] - (count_t[x]/total_c*100)
 
-                    sorted_targets = sorted(targets, key=get_urgent_score, reverse=True)
-                    for t in sorted_targets:
-                        cost = t + (kerf if current_p else 0)
+                    sorted_t = sorted(targets, key=score_func, reverse=True)
+                    found = False
+                    for t in sorted_t:
+                        cost = t + (kerf if cur_p else 0)
                         if cost <= rem:
-                            if t not in current_p and len(set(current_p)) >= max_unique: continue
-                            found_any = True
-                            backtrack(rem - cost, current_p + [t])
-                            if min_waste < 50: return 
-                    if not found_any:
-                        s = sum(get_urgent_score(bit) for bit in current_p) * 1000
-                        if s > best_score or (s == best_score and rem < min_waste):
-                            best_score, best_p, min_waste = s, current_p, rem
-                backtrack(available_len, [])
-                return best_p, min_waste
+                            if t not in cur_p and len(set(cur_p)) >= max_u: continue
+                            found = True; backtrack(rem-cost, cur_p + [t])
+                            if min_w < 10: return
+                    if not found:
+                        # Poängberäkning: Mål + utnyttjandegrad
+                        s = sum(score_func(b) for b in cur_p) * 1000 - rem
+                        if s > best_s: best_s, best_p, min_w = s, cur_p, rem
+                backtrack(r_l - trim, [])
+                return best_p, min_w
 
-            final_results_raw = []
-            prog = st.progress(0)
-            for i, r_len in enumerate(all_pieces):
-                p, waste = find_forced_pattern(r_len - trim_total)
-                if p:
-                    total_ra_mm += r_len
-                    p_list = list(p)
-                    for bit in p_list:
-                        count_tracker[bit] += 1
-                        total_cut_pieces += 1
-                        total_nytta_mm += bit
-                    if use_extra:
-                        while waste >= (extra_len + kerf):
-                            p_list.append(extra_len)
-                            waste -= (extra_len + kerf)
-                            extra_tracker += 1
-                            total_nytta_mm += extra_len
-                    final_results_raw.append((r_len, tuple(sorted(p_list)), waste))
-                if i % 20 == 0: prog.progress((i + 1) / len(all_pieces))
-            prog.empty()
+            # Kör logiken baserat på valt läge
+            raw_data = st.session_state.inventory_rows
+            if "Längdstyrd" in opt_mode:
+                u_l = set(r['l'] for r in raw_data)
+                items = [{'l': l, 'q': sum(r['q'] for r in raw_data if r['l']==l)} for l in u_l]
+            elif "Poststyrd" in opt_mode:
+                items = raw_data
+            else: # Målstyrd/Brädstyrd - dela upp i enskilda brädor
+                items = []
+                for r in raw_data: items.extend([{'l': r['l'], 'q': 1}] * r['q'])
+
+            for item in items:
+                p, w = get_best_pattern(item['l'], 1 if "Målstyrd" not in opt_mode else 5)
+                p_f = list(p)
+                if use_extra:
+                    while w >= (extra_l + kerf): p_f.append(extra_l); w -= (extra_l + kerf); extra_c += item['q']
+                for _ in range(item['q']):
+                    for b in p_f:
+                        if b in count_t: count_t[b]+=1; total_c+=1
+                    total_ra += item['l']; total_nytta += sum(p_f)
+                results.append((item['l'], tuple(sorted(p_f)), w, item['q']))
 
             # --- RESULTATVISNING ---
             st.divider()
-            st.header("📊 Resultat & Kontroll")
-            
-            m_cols = st.columns(len(targets))
-            for i, t in enumerate(targets):
-                act_pct = (count_tracker[t] / total_cut_pieces * 100) if total_cut_pieces > 0 else 0
-                diff = act_pct - goal_pcts[t]
-                m_cols[i].metric(f"{t} mm", f"{act_pct:.1f}%", f"{diff:.1f}% från mål")
-
-            spill_p = (1 - (total_nytta_mm / total_ra_mm)) * 100 if total_ra_mm > 0 else 0
+            spill_pct = (1 - (total_nytta / total_ra)) * 100 if total_ra > 0 else 0
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total råvara", f"{total_ra_mm/1000:.1f} m")
-            c2.metric("Utfall", f"{total_nytta_mm/1000:.1f} m")
-            c3.metric("Spill", f"{spill_p:.2f} %")
-            c4.metric("Extra bitar", f"{extra_tracker} st")
+            c1.metric("SPILL TOTALT", f"{spill_pct:.2f} %", delta_color="inverse")
+            c2.metric("Råvara", f"{total_ra/1000:.1f} m")
+            c3.metric("Antal huvudbitar", total_c)
+            c4.metric("Extra bitar", extra_c)
 
-            # --- EXPORT-GENERERING ---
-            export_txt = f"KAPLISTA - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-            export_txt += "="*50 + "\nSUMMERING ANTAL BITAR:\n"
-            for t in sorted(targets):
-                export_txt += f"{t} mm: {count_tracker[t]} st\n"
-            if extra_tracker > 0:
-                export_txt += f"{extra_len} mm (Extra): {extra_tracker} st\n"
-            export_txt += f"\nTotal råvara: {total_ra_mm/1000:.1f} m\nSpill: {spill_p:.2f}%\n"
-            export_txt += "="*50 + "\n\nKAPINSTRUKTIONER:\n"
-
-            summary = Counter(final_results_raw)
-            for (ra_l, bitar, rest), antal in summary.items():
-                line = f"{antal} st á {ra_l} mm  -->  Kapa: {list(bitar)}  (Spill: {int(rest)} mm)\n"
-                export_txt += line
-                with st.expander(f"{antal} st á {ra_l} mm -> {list(bitar)}"):
-                    st.write(f"Mönster: {' + '.join(map(str, bitar))} mm")
-                    st.write(f"Ändspill: {int(rest)} mm")
-
-            st.download_button("📥 LADDA NER KAPLISTA", export_txt, f"kaplista_{datetime.now().strftime('%Y%m%d_%H%M')}.txt", use_container_width=True, type="primary")
-
-with tab2:
-    st.title("💰 Priskalkyl")
-    st.info("Kalkylatorn kan läggas här.")
+            st.header("📋 Kaplista")
+            export_txt = f"KAPLISTA v81.0\nSPILL: {spill_pct:.2f}%\n" + "="*50 + "\n"
+            
+            # Gruppera mönster för snyggare lista
+            final_summary = Counter(results)
+            for (rl, bits, w, _), qty in final_summary.items():
+                row_spill = (w / rl) * 100
+                line = f"{qty} st á {rl} mm --> {list(bits)} (Spill: {int(w)} mm / {row_spill:.1f}%)"
+                export_txt += line + "\n"
+                with st.expander(line):
+                    st.write(f"Mönster: {' + '.join(map(str, bits))} mm")
+            
+            st.download_button("📥 LADDA NER KAPLISTA (TXT)", export_txt, "kaplista.txt", use_container_width=True, type="primary")
